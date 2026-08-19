@@ -40,3 +40,9 @@ add_editor_renderer(
     PLUGIN_TARGET   Multiband
     PROCESSOR_CLASS MultibandProcessor
     SOURCE_DIR      "${CMAKE_SOURCE_DIR}/plugins/multiband/source")
+
+add_editor_renderer(
+    NAME            render_opto
+    PLUGIN_TARGET   Opto
+    PROCESSOR_CLASS OptoProcessor
+    SOURCE_DIR      "${CMAKE_SOURCE_DIR}/plugins/opto/source")

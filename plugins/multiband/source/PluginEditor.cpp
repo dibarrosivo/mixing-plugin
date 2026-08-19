@@ -350,7 +350,7 @@ void MultibandEditor::paint (juce::Graphics& g)
 
     g.setColour (theme::textFaint);
     g.setFont (theme::labelFont (9.5f));
-    g.drawText ("click a band to select it   ·   drag the dividers to move crossovers",
+    g.drawText ("click a band to select it   |   drag the dividers to move crossovers",
                 juce::Rectangle<int> (margin, getHeight() - 16, getWidth() - margin * 2, 12),
                 juce::Justification::centredRight);
 }
