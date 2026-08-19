@@ -79,6 +79,80 @@ struct BiquadCoefficients
 
         return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
     }
+
+    // Q for a maximally-flat (Butterworth) second-order section. Two of these
+    // cascaded give a 4th-order Linkwitz-Riley, which is the standard crossover
+    // for multiband dynamics.
+    static constexpr float butterworthQ = 0.70710678f;
+
+    static BiquadCoefficients makeLowPass (double sampleRate,
+                                           float  frequencyHz,
+                                           float  q = butterworthQ) noexcept
+    {
+        const auto w0    = angularFrequency (sampleRate, frequencyHz);
+        const auto cosW0 = std::cos (w0);
+        const auto alpha = std::sin (w0) / (2.0f * q);
+
+        const auto b1 =  1.0f - cosW0;
+        const auto b0 =  b1 * 0.5f;
+        const auto b2 =  b0;
+        const auto a0 =  1.0f + alpha;
+        const auto a1 = -2.0f * cosW0;
+        const auto a2 =  1.0f - alpha;
+
+        return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+    }
+
+    static BiquadCoefficients makeHighPass (double sampleRate,
+                                            float  frequencyHz,
+                                            float  q = butterworthQ) noexcept
+    {
+        const auto w0    = angularFrequency (sampleRate, frequencyHz);
+        const auto cosW0 = std::cos (w0);
+        const auto alpha = std::sin (w0) / (2.0f * q);
+
+        const auto b0 =  (1.0f + cosW0) * 0.5f;
+        const auto b1 = -(1.0f + cosW0);
+        const auto b2 =  b0;
+        const auto a0 =  1.0f + alpha;
+        const auto a1 = -2.0f * cosW0;
+        const auto a2 =  1.0f - alpha;
+
+        return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+    }
+
+    /*  Second-order all-pass: unity magnitude everywhere, phase only.
+
+        Needed to keep a multi-way crossover flat. Splitting three ways means
+        the low band never passes through the second crossover, so it does not
+        pick up the phase shift the other two did — and the three no longer sum
+        back to the input. Running the low band through an all-pass matched to
+        that crossover restores it.
+    */
+    static BiquadCoefficients makeAllPass (double sampleRate,
+                                           float  frequencyHz,
+                                           float  q = butterworthQ) noexcept
+    {
+        const auto w0    = angularFrequency (sampleRate, frequencyHz);
+        const auto cosW0 = std::cos (w0);
+        const auto alpha = std::sin (w0) / (2.0f * q);
+
+        const auto b0 =  1.0f - alpha;
+        const auto b1 = -2.0f * cosW0;
+        const auto b2 =  1.0f + alpha;
+        const auto a0 =  1.0f + alpha;
+        const auto a1 = -2.0f * cosW0;
+        const auto a2 =  1.0f - alpha;
+
+        return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+    }
+
+private:
+    static float angularFrequency (double sampleRate, float frequencyHz) noexcept
+    {
+        return 2.0f * 3.14159265358979323846f
+                    * frequencyHz / static_cast<float> (sampleRate);
+    }
 };
 
 /*

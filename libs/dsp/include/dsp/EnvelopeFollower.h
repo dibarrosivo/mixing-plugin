@@ -23,6 +23,22 @@
     RMS tracks perceived loudness and is gentler — closer to how an opto or a
     vari-mu behaves. Both are here because the vocal chain needs both.
 
+    RMS mode is NOT an RMS meter. It smooths the squared signal with the same
+    asymmetric attack and release as peak mode, so what it reads depends on
+    those times relative to the signal:
+
+      * attack == release, both long compared to the period -> true RMS. A
+        full-scale sine reads 0.707.
+      * release much slower than the period -> the envelope creeps up toward
+        the peak of the squared signal instead of its mean, and the same sine
+        reads close to 1.0, nearly 3 dB hotter.
+
+    That is normal for this topology and it is what every one-pole "RMS"
+    detector in a compressor does. It matters because a threshold set by ear
+    with slow release does not mean the same number as one set with fast
+    release — and because a test that assumes textbook RMS will be wrong by up
+    to 3 dB. Use symmetric times when you need the reading to be exact.
+
     No allocation, no JUCE — lives in dsp_core so it stays cheap to test.
 */
 namespace dsp
