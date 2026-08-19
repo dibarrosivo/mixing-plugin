@@ -1,5 +1,8 @@
 #pragma once
 
+#include <memory>
+#include <vector>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 
 #include <ui/FrequencyCurveDisplay.h>
@@ -19,58 +22,76 @@ public:
     void resized() override;
 
 private:
+    static constexpr int numBands = ParamID::numBands;
+
     void timerCallback() override;
 
-    // Total response of the chain at a given frequency: the EQ band plus the
-    // broadband gains, so the curve shows what actually comes out rather than
-    // just what the filter does.
+    // ── Response ────────────────────────────────────────────────────────
+    float bandResponseDbAt (int band, float frequencyHz) const;
     float responseDbAt (float frequencyHz) const;
-    void  updateNodes();
 
-    /*
-        Slider + caption + attachment as one unit.
+    // Broadband offset applied to the curve. Dragging a handle must subtract it
+    // so the band ends up where the pointer is, not where the pointer plus the
+    // I/O trim happens to land.
+    float broadbandOffsetDb() const;
 
-        The attachment keeps the control, the parameter and the host's
-        automation lane in sync in both directions — never call
-        setValue()/getValue() on the slider yourself once one exists.
+    // ── Band management ─────────────────────────────────────────────────
+    void selectBand (int band);
+    void addBandAt (float frequencyHz, float gainDb);
+    void removeBand (int band);
+    bool isBandOn (int band) const;
 
-        Declaration order matters: the attachment must be constructed after the
-        slider it binds to, and destroyed before it.
+    void updateNodes();
+    void setParameter (juce::StringRef parameterID, float value);
+    void setBandGesture (int band, bool starting);
+
+    /*  Slider plus caption. The attachment is deliberately NOT held here.
+
+        The band controls retarget as the selection changes, so their
+        attachments are owned separately and rebuilt on each selection.
+        Bundling one in would mean destroying the slider too, which loses
+        mouse capture mid-interaction.
     */
-    struct AttachedKnob
+    struct Knob
     {
-        AttachedKnob (juce::AudioProcessorValueTreeState& state,
-                      const juce::String& parameterID,
-                      const juce::String& captionText,
-                      const juce::String& suffix,
-                      juce::LookAndFeel& lookAndFeel,
-                      juce::Component& parent);
+        Knob (const juce::String& captionText,
+              const juce::String& suffix,
+              juce::LookAndFeel& lookAndFeel,
+              juce::Component& parent);
 
         void setBounds (juce::Rectangle<int> area);
 
         juce::Slider slider;
         juce::Label  caption;
-        juce::AudioProcessorValueTreeState::SliderAttachment attachment;
     };
+
+    using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
+    using ButtonAttachment = juce::AudioProcessorValueTreeState::ButtonAttachment;
 
     MixingPluginProcessor& processorRef;
 
-    // Three, because bipolarity is a per-control property: gain-style knobs
-    // must fill outward from 12 o'clock, frequency and Q from the left stop.
+    // Bipolarity is a per-control property: gain-style knobs fill outward from
+    // 12 o'clock, frequency and Q from the left stop.
     ui::KnobLookAndFeel ioLook       { ui::theme::textDim };
     ui::KnobLookAndFeel bandLook     { ui::theme::bandColour (0) };
     ui::KnobLookAndFeel bandGainLook { ui::theme::bandColour (0) };
 
     ui::FrequencyCurveDisplay curveDisplay;
 
-    AttachedKnob inputGain;
-    AttachedKnob toneFreq;
-    AttachedKnob toneGain;
-    AttachedKnob toneQ;
-    AttachedKnob outputGain;
+    Knob freqKnob, gainKnob, qKnob, inputKnob, outputKnob;
 
+    juce::ToggleButton bandOnButton { "ON" };
     juce::ToggleButton bypassButton { "BYPASS" };
-    juce::AudioProcessorValueTreeState::ButtonAttachment bypassAttachment;
+
+    // Rebuilt whenever the selected band changes.
+    std::unique_ptr<SliderAttachment> freqAttachment, gainAttachment, qAttachment;
+    std::unique_ptr<ButtonAttachment> bandOnAttachment;
+
+    // Fixed for the lifetime of the editor.
+    std::unique_ptr<SliderAttachment> inputAttachment, outputAttachment;
+    std::unique_ptr<ButtonAttachment> bypassAttachment;
+
+    int selectedBand { 0 };
 
     // Repainting only when something moved keeps an idle editor at zero CPU,
     // which matters once thirty of these are open in a session.

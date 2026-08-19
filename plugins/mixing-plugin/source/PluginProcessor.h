@@ -1,21 +1,28 @@
 #pragma once
 
+#include <array>
+
 #include <juce_audio_processors/juce_audio_processors.h>
 #include <juce_dsp/juce_dsp.h>
 
-#include "Parameters.h"
 #include <dsp/GainStage.h>
-#include <dsp/ToneFilter.h>
+#include <dsp/ParametricEq.h>
+#include <dsp/SpectrumAnalyser.h>
+
+#include "Parameters.h"
 
 class MixingPluginProcessor final : public juce::AudioProcessor
 {
 public:
+    static constexpr size_t numBands = (size_t) ParamID::numBands;
+
     MixingPluginProcessor();
     ~MixingPluginProcessor() override = default;
 
     void prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock) override;
     void releaseResources() override;
     bool isBusesLayoutSupported (const BusesLayout& layouts) const override;
+
     // Pulls the double-precision overload into scope. Declaring only the float
     // one hides it, which is what -Woverloaded-virtual is complaining about.
     // Harmless today because supportsDoublePrecisionProcessing() is false, but
@@ -48,22 +55,40 @@ public:
 
     juce::AudioProcessorValueTreeState apvts;
 
+    // Driven from the audio thread by pushSamples(), drained and transformed on
+    // the message thread by the editor. The lock-free FIFO inside is what makes
+    // that safe; see dsp/SpectrumAnalyser.h.
+    dsp::SpectrumAnalyser<12> analyser;
+
 private:
-    // Looking a parameter up by string ID inside processBlock hashes a string
-    // on every block. Resolve the pointers once in the constructor and read
-    // through them forever after.
+    void pushToAnalyser (const juce::AudioBuffer<float>& buffer) noexcept;
+
+    // Fixed scratch for the mono sum. A member rather than a local so the audio
+    // thread never touches a large stack frame, and never allocates.
+    std::array<float, 512> analyserScratch {};
+
+    // Cached atomic pointers: looking parameters up by string ID inside
+    // processBlock would hash a string every block. Resolve once, read forever.
+    struct BandParams
+    {
+        std::atomic<float>* frequency { nullptr };
+        std::atomic<float>* gain      { nullptr };
+        std::atomic<float>* q         { nullptr };
+        std::atomic<float>* on        { nullptr };
+    };
+
+    std::array<BandParams, numBands> bandParams {};
+
     std::atomic<float>* inputGainParam  { nullptr };
-    std::atomic<float>* toneFreqParam   { nullptr };
-    std::atomic<float>* toneGainParam   { nullptr };
-    std::atomic<float>* toneQParam      { nullptr };
     std::atomic<float>* outputGainParam { nullptr };
     juce::AudioParameterBool* bypassParam { nullptr };
 
     // The signal chain, in order. Adding a module means: declare it here,
-    // prepare it in prepareToPlay, reset it in reset, process it in processBlock.
-    dsp::GainStage  inputGain;
-    dsp::ToneFilter tone;
-    dsp::GainStage  outputGain;
+    // prepare it in prepareToPlay, reset it in releaseResources, process it in
+    // processBlock. See libs/dsp for the module contract.
+    dsp::GainStage                  inputGain;
+    dsp::ParametricEq<numBands>     equaliser;
+    dsp::GainStage                  outputGain;
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixingPluginProcessor)
 };

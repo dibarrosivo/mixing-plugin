@@ -5,19 +5,27 @@
 /*
     Single source of truth for the plugin's parameters.
 
-    Everything that needs to refer to a parameter — the processor, the editor,
-    the state tree — goes through the IDs below. Nobody types a parameter ID as
-    a bare string anywhere else, so renaming one is a compiler error rather than
-    a silent runtime miss.
+    Everything that refers to a parameter — the processor, the editor, the state
+    tree — goes through the helpers below. Nobody types a parameter ID as a bare
+    string anywhere else, so a rename is a compiler error rather than a silent
+    runtime miss.
+
+    Band IDs are built rather than listed because there are four per band. The
+    format is fixed forever once released: changing "band0Freq" to anything else
+    orphans every saved session.
 */
 namespace ParamID
 {
+    inline constexpr int numBands = 6;
+
     inline constexpr auto inputGain  = "inputGain";
-    inline constexpr auto toneFreq   = "toneFreq";
-    inline constexpr auto toneGain   = "toneGain";
-    inline constexpr auto toneQ      = "toneQ";
     inline constexpr auto outputGain = "outputGain";
     inline constexpr auto bypass     = "bypass";
+
+    inline juce::String bandFreq (int index) { return "band" + juce::String (index) + "Freq"; }
+    inline juce::String bandGain (int index) { return "band" + juce::String (index) + "Gain"; }
+    inline juce::String bandQ    (int index) { return "band" + juce::String (index) + "Q"; }
+    inline juce::String bandOn   (int index) { return "band" + juce::String (index) + "On"; }
 }
 
 /*

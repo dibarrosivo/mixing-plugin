@@ -24,35 +24,53 @@ namespace
         range.setSkewForCentre (0.707f);
         return range;
     }
+
+    // Spread across the spectrum so that switching bands on in order gives
+    // something musically sensible rather than six stacked at 1 kHz.
+    constexpr float defaultFrequencies[ParamID::numBands] = {
+        80.0f, 250.0f, 700.0f, 2000.0f, 5000.0f, 12000.0f
+    };
 }
 
 juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
 {
     juce::AudioProcessorValueTreeState::ParameterLayout layout;
 
+    for (int band = 0; band < ParamID::numBands; ++band)
+    {
+        const auto number = juce::String (band + 1);
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandFreq (band), 1 },
+            "Band " + number + " Freq",
+            frequencyRange(),
+            defaultFrequencies[band]));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandGain (band), 1 },
+            "Band " + number + " Gain",
+            decibelRange (-18.0f, 18.0f),
+            0.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandQ (band), 1 },
+            "Band " + number + " Q",
+            qRange(),
+            0.707f));
+
+        // Only the first band is on by default. Six handles on a fresh instance
+        // is clutter; the user adds bands by double-clicking the display.
+        layout.add (std::make_unique<juce::AudioParameterBool> (
+            juce::ParameterID { ParamID::bandOn (band), 1 },
+            "Band " + number + " On",
+            band == 0));
+    }
+
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ParamID::inputGain, 1 },
         "Input Gain",
         decibelRange (-24.0f, 24.0f),
         0.0f));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { ParamID::toneFreq, 1 },
-        "Tone Freq",
-        frequencyRange(),
-        1000.0f));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { ParamID::toneGain, 1 },
-        "Tone Gain",
-        decibelRange (-18.0f, 18.0f),
-        0.0f));
-
-    layout.add (std::make_unique<juce::AudioParameterFloat> (
-        juce::ParameterID { ParamID::toneQ, 1 },
-        "Tone Q",
-        qRange(),
-        0.707f));
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
         juce::ParameterID { ParamID::outputGain, 1 },

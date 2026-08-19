@@ -7,10 +7,19 @@ MixingPluginProcessor::MixingPluginProcessor()
                                 .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
       apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
 {
+    for (size_t band = 0; band < numBands; ++band)
+    {
+        const auto index = (int) band;
+
+        bandParams[band].frequency = apvts.getRawParameterValue (ParamID::bandFreq (index));
+        bandParams[band].gain      = apvts.getRawParameterValue (ParamID::bandGain (index));
+        bandParams[band].q         = apvts.getRawParameterValue (ParamID::bandQ    (index));
+        bandParams[band].on        = apvts.getRawParameterValue (ParamID::bandOn   (index));
+
+        jassert (bandParams[band].frequency != nullptr);
+    }
+
     inputGainParam  = apvts.getRawParameterValue (ParamID::inputGain);
-    toneFreqParam   = apvts.getRawParameterValue (ParamID::toneFreq);
-    toneGainParam   = apvts.getRawParameterValue (ParamID::toneGain);
-    toneQParam      = apvts.getRawParameterValue (ParamID::toneQ);
     outputGainParam = apvts.getRawParameterValue (ParamID::outputGain);
 
     bypassParam = dynamic_cast<juce::AudioParameterBool*> (
@@ -29,8 +38,9 @@ void MixingPluginProcessor::prepareToPlay (double sampleRate, int maximumExpecte
     };
 
     inputGain.prepare (spec);
-    tone.prepare (spec);
+    equaliser.prepare (spec);
     outputGain.prepare (spec);
+    analyser.prepare (sampleRate);
 
     // Push the current parameter values in and snap the smoothers to them, so
     // the first block after a transport start is not a 20 ms ramp from silence.
@@ -43,8 +53,9 @@ void MixingPluginProcessor::prepareToPlay (double sampleRate, int maximumExpecte
 void MixingPluginProcessor::releaseResources()
 {
     inputGain.reset();
-    tone.reset();
+    equaliser.reset();
     outputGain.reset();
+    analyser.reset();
 }
 
 bool MixingPluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
@@ -71,25 +82,63 @@ void MixingPluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
     for (auto ch = numInputChannels; ch < numOutputChannels; ++ch)
         buffer.clear (ch, 0, buffer.getNumSamples());
 
-    if (bypassParam->get())
+    // Zero latency, so bypass is a plain pass-through. If you ever add a
+    // look-ahead or oversampling stage, this branch has to delay the dry signal
+    // by the same amount or bypass will click and phase-cancel.
+    if (! bypassParam->get())
     {
-        // Zero latency, so bypass is a plain pass-through. If you ever add a
-        // look-ahead or oversampling stage, this branch has to delay the dry
-        // signal by the same amount or bypass will click and phase-cancel.
-        return;
+        inputGain.setGainDecibels  (inputGainParam->load());
+        outputGain.setGainDecibels (outputGainParam->load());
+
+        for (size_t band = 0; band < numBands; ++band)
+        {
+            equaliser.setBand (band, {
+                bandParams[band].frequency->load(),
+                bandParams[band].gain->load(),
+                bandParams[band].q->load(),
+                bandParams[band].on->load() > 0.5f
+            });
+        }
+
+        juce::dsp::AudioBlock<float> block { buffer };
+
+        inputGain.process (block);
+        equaliser.process (block);
+        outputGain.process (block);
     }
 
-    inputGain.setGainDecibels  (inputGainParam->load());
-    tone.setParameters         (toneFreqParam->load(),
-                                toneGainParam->load(),
-                                toneQParam->load());
-    outputGain.setGainDecibels (outputGainParam->load());
+    // Fed in both paths, so the analyser keeps showing signal while bypassed
+    // rather than going blank and looking broken.
+    pushToAnalyser (buffer);
+}
 
-    juce::dsp::AudioBlock<float> block { buffer };
+void MixingPluginProcessor::pushToAnalyser (const juce::AudioBuffer<float>& buffer) noexcept
+{
+    const auto numChannels = buffer.getNumChannels();
+    const auto numSamples  = buffer.getNumSamples();
 
-    inputGain.process (block);
-    tone.process (block);
-    outputGain.process (block);
+    if (numChannels <= 0 || numSamples <= 0)
+        return;
+
+    const auto scale = 1.0f / (float) numChannels;
+    const auto chunkSize = (int) analyserScratch.size();
+
+    for (int offset = 0; offset < numSamples; offset += chunkSize)
+    {
+        const auto chunk = juce::jmin (chunkSize, numSamples - offset);
+
+        for (int i = 0; i < chunk; ++i)
+        {
+            auto sum = 0.0f;
+
+            for (int ch = 0; ch < numChannels; ++ch)
+                sum += buffer.getReadPointer (ch)[offset + i];
+
+            analyserScratch[(size_t) i] = sum * scale;
+        }
+
+        analyser.pushSamples (analyserScratch.data(), chunk);
+    }
 }
 
 juce::AudioProcessorEditor* MixingPluginProcessor::createEditor()
