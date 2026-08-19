@@ -37,6 +37,9 @@ public:
     using NodeDragCallback    = std::function<void (int index, float frequencyHz, float gainDb)>;
     using NodeGestureCallback = std::function<void (int index, bool starting)>;
     using NodeSelectCallback  = std::function<void (int index)>;
+    using RegionSelectCallback     = std::function<void (int id)>;
+    using CrossoverDragCallback    = std::function<void (int index, float frequencyHz)>;
+    using CrossoverGestureCallback = std::function<void (int index, bool starting)>;
     using AddBandCallback     = std::function<void (float frequencyHz, float gainDb)>;
     using RemoveBandCallback  = std::function<void (int index)>;
 
@@ -118,6 +121,43 @@ public:
         repaint();
     }
 
+    /*  A frequency region owned by one band, with its live gain reduction.
+
+        This is the multiband view of the same axes the EQ uses: instead of a
+        curve with handles, contiguous regions with a bar dropping from the
+        0 dB line by however much that band is being pulled down. Sharing the
+        component means the grid, the spectrum and the log mapping are
+        identical across both plugins for free.
+    */
+    struct BandRegion
+    {
+        int          id          { 0 };
+        float        lowHz       { 20.0f };
+        float        highHz      { 20000.0f };
+        juce::Colour colour      { theme::bandColour (0) };
+        float        reductionDb { 0.0f };   // <= 0
+        bool         selected    { false };
+        bool         muted       { false };
+        bool         dimmed      { false };  // another band is soloed
+    };
+
+    void setBandRegions (std::vector<BandRegion> newRegions)
+    {
+        regions = std::move (newRegions);
+        repaint();
+    }
+
+    // Draggable dividers between regions.
+    void setCrossoverFrequencies (std::vector<float> frequencies)
+    {
+        crossovers = std::move (frequencies);
+        repaint();
+    }
+
+    void setRegionSelectCallback (RegionSelectCallback fn)         { onRegionSelect = std::move (fn); }
+    void setCrossoverDragCallback (CrossoverDragCallback fn)       { onCrossoverDrag = std::move (fn); }
+    void setCrossoverGestureCallback (CrossoverGestureCallback fn) { onCrossoverGesture = std::move (fn); }
+
     void setNodeDragCallback (NodeDragCallback fn)       { onNodeDrag = std::move (fn); }
     void setNodeGestureCallback (NodeGestureCallback fn) { onNodeGesture = std::move (fn); }
     void setNodeSelectCallback (NodeSelectCallback fn)   { onNodeSelect = std::move (fn); }
@@ -163,12 +203,15 @@ public:
     {
         g.fillAll (theme::displayBackground);
 
+        paintBandRegions (g);   // behind everything: they are the ground, not marks
         paintFrequencyGrid (g);
         paintDecibelGrid (g);
         paintSpectrum (g);      // behind the curve — it is context, not content
         paintBandFills (g);     // then each band's own contribution
         paintStaticGhost (g);   // where the curve would sit with no dynamics
         paintCurve (g);         // then the live composite, on top of everything
+        paintGainReduction (g);
+        paintCrossovers (g);
         paintNodes (g);
 
         g.setColour (theme::border);
@@ -178,10 +221,39 @@ public:
     // ── Interaction ─────────────────────────────────────────────────────
     void mouseDown (const juce::MouseEvent& event) override
     {
+        // Crossovers are checked first: they are full-height targets, and a
+        // plugin that has them generally has no nodes, so there is no contest.
+        draggedCrossover = findCrossoverNear (event.position);
+
+        if (draggedCrossover >= 0)
+        {
+            if (onCrossoverGesture)
+                onCrossoverGesture (draggedCrossover, true);
+
+            return;
+        }
+
         draggedNode = findNodeNear (event.position);
 
         if (draggedNode < 0)
+        {
+            // Nothing grabbable under the pointer — treat it as picking the
+            // band whose region was clicked, which is how a multiband is
+            // navigated.
+            if (onRegionSelect && plotArea.contains (event.position))
+            {
+                const auto hz = xToFrequency (event.position.x);
+
+                for (const auto& region : regions)
+                    if (hz >= region.lowHz && hz < region.highHz)
+                    {
+                        onRegionSelect (region.id);
+                        break;
+                    }
+            }
+
             return;
+        }
 
         if (onNodeSelect)
             onNodeSelect (nodes[(size_t) draggedNode].id);
@@ -216,6 +288,16 @@ public:
 
     void mouseDrag (const juce::MouseEvent& event) override
     {
+        if (draggedCrossover >= 0)
+        {
+            if (onCrossoverDrag)
+                onCrossoverDrag (draggedCrossover,
+                                 xToFrequency (juce::jlimit (plotArea.getX(),
+                                                             plotArea.getRight(),
+                                                             event.position.x)));
+            return;
+        }
+
         if (draggedNode < 0 || ! onNodeDrag)
             return;
 
@@ -230,6 +312,17 @@ public:
 
     void mouseUp (const juce::MouseEvent&) override
     {
+        if (draggedCrossover >= 0)
+        {
+            if (onCrossoverGesture)
+                onCrossoverGesture (draggedCrossover, false);
+
+            draggedCrossover = -1;
+            hoveredCrossover = -1;
+            repaint();
+            return;
+        }
+
         if (draggedNode >= 0 && onNodeGesture)
             onNodeGesture (nodes[(size_t) draggedNode].id, false);
 
@@ -240,27 +333,132 @@ public:
 
     void mouseMove (const juce::MouseEvent& event) override
     {
-        const auto found = findNodeNear (event.position);
+        const auto crossover = findCrossoverNear (event.position);
+        const auto node = crossover >= 0 ? -1 : findNodeNear (event.position);
 
-        if (found != hoveredNode)
-        {
-            hoveredNode = found;
-            setMouseCursor (found >= 0 ? juce::MouseCursor::DraggingHandCursor
+        if (crossover == hoveredCrossover && node == hoveredNode)
+            return;
+
+        hoveredCrossover = crossover;
+        hoveredNode = node;
+
+        setMouseCursor (crossover >= 0 ? juce::MouseCursor::LeftRightResizeCursor
+                      : node >= 0      ? juce::MouseCursor::DraggingHandCursor
                                        : juce::MouseCursor::NormalCursor);
-            repaint();
-        }
+        repaint();
     }
 
     void mouseExit (const juce::MouseEvent&) override
     {
-        if (hoveredNode >= 0)
+        if (hoveredNode >= 0 || hoveredCrossover >= 0)
         {
             hoveredNode = -1;
+            hoveredCrossover = -1;
             repaint();
         }
     }
 
 private:
+    int findCrossoverNear (juce::Point<float> position) const
+    {
+        constexpr float grabWidth = 7.0f;
+
+        if (! plotArea.contains (position))
+            return -1;
+
+        int   best = -1;
+        float bestDistance = grabWidth;
+
+        for (size_t i = 0; i < crossovers.size(); ++i)
+        {
+            const auto distance = std::abs (frequencyToX (crossovers[i]) - position.x);
+
+            if (distance < bestDistance)
+            {
+                bestDistance = distance;
+                best = (int) i;
+            }
+        }
+
+        return best;
+    }
+
+    void paintBandRegions (juce::Graphics& g) const
+    {
+        for (const auto& region : regions)
+        {
+            const auto left  = frequencyToX (region.lowHz);
+            const auto right = frequencyToX (region.highHz);
+
+            const juce::Rectangle<float> area { left, plotArea.getY(),
+                                                right - left, plotArea.getHeight() };
+
+            // Very low alpha. The regions have to say "this band owns this
+            // range" without competing with the spectrum drawn on top.
+            auto alpha = region.selected ? 0.10f : 0.045f;
+
+            if (region.muted || region.dimmed)
+                alpha *= 0.35f;
+
+            g.setColour (region.colour.withAlpha (alpha));
+            g.fillRect (area);
+        }
+    }
+
+    void paintGainReduction (juce::Graphics& g) const
+    {
+        const auto zeroY = decibelsToY (0.0f);
+
+        for (const auto& region : regions)
+        {
+            if (region.reductionDb > -0.05f)
+                continue;
+
+            const auto left  = frequencyToX (region.lowHz);
+            const auto right = frequencyToX (region.highHz);
+            const auto bottom = decibelsToY (juce::jmax (decibelMin, region.reductionDb));
+
+            // A bar hanging DOWN from the 0 dB line, in the band's own colour.
+            // Growing downward is the whole point — it reads as level being
+            // pulled away, which is what is happening.
+            // Translucent enough to read the spectrum through. The bar says
+            // "how much", the line at its edge says "exactly how much" — the
+            // fill does not need to shout as well.
+            g.setColour (region.colour.withAlpha (region.muted ? 0.10f : 0.22f));
+            g.fillRect (juce::Rectangle<float> { left + 1.0f, zeroY,
+                                                 right - left - 2.0f, bottom - zeroY });
+
+            g.setColour (region.colour.withAlpha (0.9f));
+            g.drawLine (left + 1.0f, bottom, right - 1.0f, bottom, 1.5f);
+        }
+    }
+
+    void paintCrossovers (juce::Graphics& g) const
+    {
+        for (size_t i = 0; i < crossovers.size(); ++i)
+        {
+            const auto x = frequencyToX (crossovers[i]);
+            const auto engaged = ((int) i == hoveredCrossover) || ((int) i == draggedCrossover);
+
+            g.setColour (theme::text.withAlpha (engaged ? 0.75f : 0.35f));
+            g.drawVerticalLine ((int) x, plotArea.getY(), plotArea.getBottom());
+
+            if (engaged)
+            {
+                g.setFont (theme::labelFont (10.0f));
+                g.setColour (theme::text);
+
+                const auto hz = crossovers[i];
+                const auto label = hz >= 1000.0f ? juce::String (hz / 1000.0f, 2) + " kHz"
+                                                 : juce::String ((int) hz) + " Hz";
+
+                g.drawText (label,
+                            juce::Rectangle<float> (x - 34.0f, plotArea.getY() + 3.0f, 68.0f, 13.0f),
+                            juce::Justification::centred);
+            }
+        }
+    }
+
     int findNodeNear (juce::Point<float> position) const
     {
         constexpr float grabRadius = 11.0f;
@@ -552,7 +750,14 @@ private:
     AddBandCallback     onAddBand;
     RemoveBandCallback  onRemoveBand;
 
-    std::vector<BandNode> nodes;
+    std::vector<BandNode>   nodes;
+    std::vector<BandRegion> regions;
+    std::vector<float>      crossovers;
+
+    RegionSelectCallback     onRegionSelect;
+    CrossoverDragCallback    onCrossoverDrag;
+    CrossoverGestureCallback onCrossoverGesture;
+
     juce::Rectangle<float> plotArea;
 
     float decibelMin { -18.0f };
@@ -562,6 +767,8 @@ private:
 
     int hoveredNode { -1 };
     int draggedNode { -1 };
+    int hoveredCrossover { -1 };
+    int draggedCrossover { -1 };
 };
 
 } // namespace ui

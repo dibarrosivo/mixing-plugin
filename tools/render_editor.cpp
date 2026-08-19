@@ -18,6 +18,17 @@
 #include "PluginProcessor.h"
 #include "PluginEditor.h"
 
+/*  Which plugin this binary renders is chosen at compile time: the two headers
+    above are found via the include path, and the class names come from the
+    build. One source file therefore serves every plugin in the repo, and a new
+    plugin gets a renderer by adding one line to tools/CMakeLists.txt.
+*/
+#ifndef PLUGIN_PROCESSOR_CLASS
+ #define PLUGIN_PROCESSOR_CLASS MixingPluginProcessor
+#endif
+
+using ProcessorType = PLUGIN_PROCESSOR_CLASS;
+
 int main (int argc, char** argv)
 {
     if (argc < 2)
@@ -30,7 +41,7 @@ int main (int argc, char** argv)
     // any window. Required before touching Component or Graphics.
     juce::ScopedJuceInitialiser_GUI juceInitialiser;
 
-    MixingPluginProcessor processor;
+    ProcessorType processor;
 
     // Any further arguments of the form id=value set a parameter before the
     // render. A UI is only worth reviewing in the states it will actually be
