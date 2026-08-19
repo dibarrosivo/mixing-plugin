@@ -46,3 +46,9 @@ add_editor_renderer(
     PLUGIN_TARGET   Opto
     PROCESSOR_CLASS OptoProcessor
     SOURCE_DIR      "${CMAKE_SOURCE_DIR}/plugins/opto/source")
+
+add_editor_renderer(
+    NAME            render_exciter
+    PLUGIN_TARGET   Exciter
+    PROCESSOR_CLASS ExciterProcessor
+    SOURCE_DIR      "${CMAKE_SOURCE_DIR}/plugins/exciter/source")
