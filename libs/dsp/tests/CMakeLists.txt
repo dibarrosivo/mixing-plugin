@@ -11,3 +11,6 @@ function(add_dsp_test name)
 endfunction()
 
 add_dsp_test(biquad_test)
+add_dsp_test(envelope_follower_test)
+add_dsp_test(gain_computer_test)
+add_dsp_test(filter_response_test)

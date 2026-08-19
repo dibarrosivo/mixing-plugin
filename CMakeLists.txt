@@ -50,6 +50,7 @@ include(AudioPlugin)
 
 # Shared DSP first — plugins depend on it.
 add_subdirectory(libs/dsp)
+add_subdirectory(libs/ui)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Plugins
@@ -72,3 +73,11 @@ endforeach()
 
 get_property(_codes GLOBAL PROPERTY AUDIO_PLUGIN_SUMMARY)
 message(STATUS "Plugins in this build: ${_codes}")
+
+# Development tools — offscreen editor rendering, so the UI can be reviewed
+# from a build artefact instead of by launching the standalone.
+option(AUDIO_BUILD_TOOLS "Build development tools" ON)
+
+if(AUDIO_BUILD_TOOLS)
+    add_subdirectory(tools)
+endif()

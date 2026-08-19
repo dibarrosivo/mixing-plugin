@@ -111,6 +111,7 @@ function(add_audio_plugin)
     target_link_libraries(${AP_TARGET}
         PRIVATE
             audio::dsp
+            audio::ui
             juce::juce_audio_utils
             juce::juce_dsp
             ${AP_EXTRA_LIBS}
