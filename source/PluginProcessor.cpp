@@ -1,0 +1,118 @@
+#include "PluginProcessor.h"
+#include "PluginEditor.h"
+
+MixingPluginProcessor::MixingPluginProcessor()
+    : juce::AudioProcessor (BusesProperties()
+                                .withInput  ("Input",  juce::AudioChannelSet::stereo(), true)
+                                .withOutput ("Output", juce::AudioChannelSet::stereo(), true)),
+      apvts (*this, nullptr, "PARAMETERS", createParameterLayout())
+{
+    inputGainParam  = apvts.getRawParameterValue (ParamID::inputGain);
+    toneFreqParam   = apvts.getRawParameterValue (ParamID::toneFreq);
+    toneGainParam   = apvts.getRawParameterValue (ParamID::toneGain);
+    toneQParam      = apvts.getRawParameterValue (ParamID::toneQ);
+    outputGainParam = apvts.getRawParameterValue (ParamID::outputGain);
+
+    bypassParam = dynamic_cast<juce::AudioParameterBool*> (
+        apvts.getParameter (ParamID::bypass));
+
+    jassert (bypassParam != nullptr);
+}
+
+void MixingPluginProcessor::prepareToPlay (double sampleRate, int maximumExpectedSamplesPerBlock)
+{
+    const juce::dsp::ProcessSpec spec {
+        sampleRate,
+        static_cast<juce::uint32> (maximumExpectedSamplesPerBlock),
+        static_cast<juce::uint32> (juce::jmax (getTotalNumInputChannels(),
+                                               getTotalNumOutputChannels()))
+    };
+
+    inputGain.prepare (spec);
+    tone.prepare (spec);
+    outputGain.prepare (spec);
+
+    // Push the current parameter values in and snap the smoothers to them, so
+    // the first block after a transport start is not a 20 ms ramp from silence.
+    inputGain.setGainDecibels (inputGainParam->load());
+    outputGain.setGainDecibels (outputGainParam->load());
+    inputGain.reset();
+    outputGain.reset();
+}
+
+void MixingPluginProcessor::releaseResources()
+{
+    inputGain.reset();
+    tone.reset();
+    outputGain.reset();
+}
+
+bool MixingPluginProcessor::isBusesLayoutSupported (const BusesLayout& layouts) const
+{
+    const auto& mainIn  = layouts.getMainInputChannelSet();
+    const auto& mainOut = layouts.getMainOutputChannelSet();
+
+    if (mainIn != mainOut)
+        return false;
+
+    return mainOut == juce::AudioChannelSet::mono()
+        || mainOut == juce::AudioChannelSet::stereo();
+}
+
+void MixingPluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce::MidiBuffer&)
+{
+    // Flushes denormals to zero for the lifetime of this scope. Without it,
+    // the tiny values left in filter state after silence cost enormous CPU.
+    juce::ScopedNoDenormals noDenormals;
+
+    const auto numInputChannels  = getTotalNumInputChannels();
+    const auto numOutputChannels = getTotalNumOutputChannels();
+
+    for (auto ch = numInputChannels; ch < numOutputChannels; ++ch)
+        buffer.clear (ch, 0, buffer.getNumSamples());
+
+    if (bypassParam->get())
+    {
+        // Zero latency, so bypass is a plain pass-through. If you ever add a
+        // look-ahead or oversampling stage, this branch has to delay the dry
+        // signal by the same amount or bypass will click and phase-cancel.
+        return;
+    }
+
+    inputGain.setGainDecibels  (inputGainParam->load());
+    tone.setParameters         (toneFreqParam->load(),
+                                toneGainParam->load(),
+                                toneQParam->load());
+    outputGain.setGainDecibels (outputGainParam->load());
+
+    juce::dsp::AudioBlock<float> block { buffer };
+
+    inputGain.process (block);
+    tone.process (block);
+    outputGain.process (block);
+}
+
+juce::AudioProcessorEditor* MixingPluginProcessor::createEditor()
+{
+    return new MixingPluginEditor (*this);
+}
+
+void MixingPluginProcessor::getStateInformation (juce::MemoryBlock& destData)
+{
+    // APVTS serialises the whole parameter tree, so new parameters are saved
+    // automatically without touching this method.
+    if (auto xml = apvts.copyState().createXml())
+        copyXmlToBinary (*xml, destData);
+}
+
+void MixingPluginProcessor::setStateInformation (const void* data, int sizeInBytes)
+{
+    if (auto xml = getXmlFromBinary (data, sizeInBytes))
+        if (xml->hasTagName (apvts.state.getType()))
+            apvts.replaceState (juce::ValueTree::fromXml (*xml));
+}
+
+juce::AudioProcessor* JUCE_CALLTYPE createPluginFilter()
+{
+    return new MixingPluginProcessor();
+}
