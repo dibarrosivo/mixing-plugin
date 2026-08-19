@@ -1,27 +1,29 @@
 #pragma once
 
+#include <algorithm>
 #include <array>
 
 #include <juce_dsp/juce_dsp.h>
 
-#include <dsp/ToneFilter.h>
+#include <dsp/DynamicEqBand.h>
 
 /*
-    An N-band parametric EQ: a stack of independent peaking bands in series.
+    An N-band parametric EQ: a stack of independent bands in series, each of
+    which can be static or dynamic.
 
     Series rather than parallel because that is what "an EQ" means — each band
     filters the output of the one before it, so their responses multiply
     (add in dB). Summing bands in parallel gives comb filtering and a response
     that looks nothing like the curve you drew.
 
-    Bands are always processed while enabled, even at 0 dB where a peaking
-    filter is mathematically unity. Skipping them would save a handful of
-    multiplies and leave stale state in the filter, so the first sample after
-    the gain moved off zero would carry a transient from whenever it was last
-    active. Six biquads is not worth a discontinuity.
+    A consequence worth knowing: because the bands are in series, a dynamic
+    band's sidechain hears the output of every band before it. Band 3 reacting
+    to a resonance that band 1 has already removed is usually what you want, but
+    it does mean band order affects behaviour in a way it does not for a purely
+    static EQ.
 
-    This is the base the client's dynamic EQ sits on: a dynamic band is one of
-    these whose gain is driven by a detector rather than by a knob.
+    This is a thin adapter over DynamicEqBand, which holds the actual DSP and
+    lives in dsp_core so it can be tested without JUCE.
 */
 namespace dsp
 {
@@ -31,53 +33,60 @@ class ParametricEq
 {
 public:
     static constexpr size_t numBands = NumBands;
+    static constexpr int maxChannels = DynamicEqBand::maxChannels;
 
-    struct Band
-    {
-        float frequencyHz { 1000.0f };
-        float gainDb      { 0.0f };
-        float q           { 0.707f };
-        bool  enabled     { false };
-    };
+    using Band = DynamicEqBand::Settings;
 
     void prepare (const juce::dsp::ProcessSpec& spec)
     {
-        for (auto& filter : filters)
-            filter.prepare (spec);
+        for (auto& band : bands)
+            band.prepare (spec.sampleRate);
     }
 
     void reset()
     {
-        for (auto& filter : filters)
-            filter.reset();
+        for (auto& band : bands)
+            band.reset();
     }
 
-    void setBand (size_t index, const Band& band) noexcept
+    void setBand (size_t index, const Band& settings) noexcept
     {
-        if (index >= NumBands)
-            return;
-
-        // A band switched off then on again must not resume mid-ring with
-        // whatever was in its state from before.
-        if (band.enabled && ! bands[index].enabled)
-            filters[index].reset();
-
-        bands[index] = band;
-        filters[index].setParameters (band.frequencyHz, band.gainDb, band.q);
+        if (index < NumBands)
+            bands[index].setSettings (settings);
     }
 
-    const Band& getBand (size_t index) const noexcept { return bands[index]; }
+    const Band& getBand (size_t index) const noexcept
+    {
+        return bands[index].getSettings();
+    }
+
+    // Live gain reduction for metering. Safe to call from the message thread.
+    float getBandReductionDb (size_t index) const noexcept
+    {
+        return index < NumBands ? bands[index].getGainReductionDb() : 0.0f;
+    }
 
     void process (juce::dsp::AudioBlock<float>& block) noexcept
     {
-        for (size_t i = 0; i < NumBands; ++i)
-            if (bands[i].enabled)
-                filters[i].process (block);
+        const auto numChannels = (int) std::min (block.getNumChannels(),
+                                                 (size_t) maxChannels);
+        const auto numSamples  = (int) block.getNumSamples();
+
+        if (numChannels <= 0 || numSamples <= 0)
+            return;
+
+        // A fixed-size stack array, not a vector: this runs on the audio thread.
+        float* channels[maxChannels] {};
+
+        for (int channel = 0; channel < numChannels; ++channel)
+            channels[channel] = block.getChannelPointer ((size_t) channel);
+
+        for (auto& band : bands)
+            band.process (channels, numChannels, numSamples);
     }
 
 private:
-    std::array<Band, NumBands>       bands {};
-    std::array<ToneFilter, NumBands> filters {};
+    std::array<DynamicEqBand, NumBands> bands {};
 };
 
 } // namespace dsp

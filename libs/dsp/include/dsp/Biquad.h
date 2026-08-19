@@ -49,6 +49,36 @@ struct BiquadCoefficients
         // Normalise so a0 == 1 and it drops out of the difference equation.
         return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
     }
+
+    /*  Band-pass with constant 0 dB peak gain.
+
+        This is the sidechain filter for a dynamic EQ band: it lets the detector
+        hear only the frequencies the band actually controls. Without it the
+        band reacts to the whole signal and you have a compressor that happens
+        to be wired to a filter, which is a different and much less useful tool.
+
+        "Constant 0 dB peak gain" matters here: whatever the Q, a sine at the
+        centre frequency comes through at unity. That means a threshold in dBFS
+        keeps meaning the same thing when the user changes Q.
+    */
+    static BiquadCoefficients makeBandPass (double sampleRate,
+                                            float  frequencyHz,
+                                            float  q) noexcept
+    {
+        const auto w0    = 2.0f * 3.14159265358979323846f
+                                * frequencyHz / static_cast<float> (sampleRate);
+        const auto cosW0 = std::cos (w0);
+        const auto alpha = std::sin (w0) / (2.0f * q);
+
+        const auto b0 =  alpha;
+        const auto b1 =  0.0f;
+        const auto b2 = -alpha;
+        const auto a0 =  1.0f + alpha;
+        const auto a1 = -2.0f * cosW0;
+        const auto a2 =  1.0f - alpha;
+
+        return { b0 / a0, b1 / a0, b2 / a0, a1 / a0, a2 / a0 };
+    }
 };
 
 /*

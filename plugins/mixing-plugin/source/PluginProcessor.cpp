@@ -15,6 +15,11 @@ MixingPluginProcessor::MixingPluginProcessor()
         bandParams[band].gain      = apvts.getRawParameterValue (ParamID::bandGain (index));
         bandParams[band].q         = apvts.getRawParameterValue (ParamID::bandQ    (index));
         bandParams[band].on        = apvts.getRawParameterValue (ParamID::bandOn   (index));
+        bandParams[band].dynamic   = apvts.getRawParameterValue (ParamID::bandDyn (index));
+        bandParams[band].threshold = apvts.getRawParameterValue (ParamID::bandThreshold (index));
+        bandParams[band].ratio     = apvts.getRawParameterValue (ParamID::bandRatio (index));
+        bandParams[band].attack    = apvts.getRawParameterValue (ParamID::bandAttack (index));
+        bandParams[band].release   = apvts.getRawParameterValue (ParamID::bandRelease (index));
 
         jassert (bandParams[band].frequency != nullptr);
     }
@@ -92,12 +97,21 @@ void MixingPluginProcessor::processBlock (juce::AudioBuffer<float>& buffer, juce
 
         for (size_t band = 0; band < numBands; ++band)
         {
-            equaliser.setBand (band, {
-                bandParams[band].frequency->load(),
-                bandParams[band].gain->load(),
-                bandParams[band].q->load(),
-                bandParams[band].on->load() > 0.5f
-            });
+            const auto& p = bandParams[band];
+
+            dsp::DynamicEqBand::Settings settings;
+            settings.frequencyHz    = p.frequency->load();
+            settings.staticGainDb   = p.gain->load();
+            settings.q              = p.q->load();
+            settings.enabled        = p.on->load() > 0.5f;
+            settings.dynamicEnabled = p.dynamic->load() > 0.5f;
+            settings.thresholdDb    = p.threshold->load();
+            settings.ratio          = p.ratio->load();
+            settings.kneeDb         = 6.0f;   // fixed for now; a musical default
+            settings.attackMs       = p.attack->load();
+            settings.releaseMs      = p.release->load();
+
+            equaliser.setBand (band, settings);
         }
 
         juce::dsp::AudioBlock<float> block { buffer };

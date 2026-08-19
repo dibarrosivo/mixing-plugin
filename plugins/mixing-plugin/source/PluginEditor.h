@@ -1,5 +1,6 @@
 #pragma once
 
+#include <array>
 #include <memory>
 #include <vector>
 
@@ -27,8 +28,12 @@ private:
     void timerCallback() override;
 
     // ── Response ────────────────────────────────────────────────────────
-    float bandResponseDbAt (int band, float frequencyHz) const;
+    // includeDynamics selects the live curve (what is happening right now) or
+    // the static one (what the knobs alone would do). The gap between them is
+    // the gain reduction, which is what the ghost curve shows.
+    float bandResponseDbAt (int band, float frequencyHz, bool includeDynamics) const;
     float responseDbAt (float frequencyHz) const;
+    float staticResponseDbAt (float frequencyHz) const;
 
     // Broadband offset applied to the curve. Dragging a handle must subtract it
     // so the band ends up where the pointer is, not where the pointer plus the
@@ -40,8 +45,10 @@ private:
     void addBandAt (float frequencyHz, float gainDb);
     void removeBand (int band);
     bool isBandOn (int band) const;
+    bool isBandDynamic (int band) const;
 
     void updateNodes();
+    void paintReductionMeter (juce::Graphics& g, juce::Rectangle<int> area) const;
     void setParameter (juce::StringRef parameterID, float value);
     void setBandGesture (int band, bool starting);
 
@@ -79,13 +86,17 @@ private:
     ui::FrequencyCurveDisplay curveDisplay;
 
     Knob freqKnob, gainKnob, qKnob, inputKnob, outputKnob;
+    Knob thresholdKnob, ratioKnob, attackKnob, releaseKnob;
 
     juce::ToggleButton bandOnButton { "ON" };
+    juce::ToggleButton bandDynButton { "DYN" };
     juce::ToggleButton bypassButton { "BYPASS" };
 
     // Rebuilt whenever the selected band changes.
     std::unique_ptr<SliderAttachment> freqAttachment, gainAttachment, qAttachment;
-    std::unique_ptr<ButtonAttachment> bandOnAttachment;
+    std::unique_ptr<SliderAttachment> thresholdAttachment, ratioAttachment;
+    std::unique_ptr<SliderAttachment> attackAttachment, releaseAttachment;
+    std::unique_ptr<ButtonAttachment> bandOnAttachment, bandDynAttachment;
 
     // Fixed for the lifetime of the editor.
     std::unique_ptr<SliderAttachment> inputAttachment, outputAttachment;
@@ -96,6 +107,10 @@ private:
     // Repainting only when something moved keeps an idle editor at zero CPU,
     // which matters once thirty of these are open in a session.
     float lastResponseSignature { 0.0f };
+
+    // Gain reduction moves with the audio, so it needs its own change check —
+    // the parameter signature never sees it.
+    std::array<float, (size_t) numBands> lastReductionDb {};
 
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (MixingPluginEditor)
 };

@@ -8,7 +8,8 @@ using namespace ui;
 namespace
 {
     constexpr int headerHeight  = 30;
-    constexpr int controlHeight = 88;
+    constexpr int controlHeight = 168;   // two rows: band, then dynamics
+    constexpr int rowHeight     = 74;
     constexpr int margin        = 10;
     constexpr int knobSlot      = 70;
     constexpr int badgeWidth    = 58;
@@ -52,7 +53,11 @@ MixingPluginEditor::MixingPluginEditor (MixingPluginProcessor& p)
       gainKnob   ("GAIN",   " dB", bandGainLook, *this),
       qKnob      ("Q",      "",    bandLook,     *this),
       inputKnob  ("INPUT",  " dB", ioLook,       *this),
-      outputKnob ("OUTPUT", " dB", ioLook,       *this)
+      outputKnob ("OUTPUT", " dB", ioLook,       *this),
+      thresholdKnob ("THRESH",  " dB", bandLook, *this),
+      ratioKnob     ("RATIO",   ":1",  bandLook, *this),
+      attackKnob    ("ATTACK",  " ms", bandLook, *this),
+      releaseKnob   ("RELEASE", " ms", bandLook, *this)
 {
     ioLook.setBipolar (true);        // input/output gain are ± around unity
     bandGainLook.setBipolar (true);  // band gain is a boost/cut around flat
@@ -62,8 +67,10 @@ MixingPluginEditor::MixingPluginEditor (MixingPluginProcessor& p)
     bypassAttachment = std::make_unique<ButtonAttachment> (p.apvts, ParamID::bypass,     bypassButton);
 
     bandOnButton.setLookAndFeel (&bandLook);
+    bandDynButton.setLookAndFeel (&bandLook);
     bypassButton.setLookAndFeel (&ioLook);
     addAndMakeVisible (bandOnButton);
+    addAndMakeVisible (bandDynButton);
     addAndMakeVisible (bypassButton);
 
     addAndMakeVisible (curveDisplay);
@@ -71,6 +78,7 @@ MixingPluginEditor::MixingPluginEditor (MixingPluginProcessor& p)
     curveDisplay.setSpectrumRange (-90.0f, 0.0f);
 
     curveDisplay.setResponseFunction ([this] (float hz) { return responseDbAt (hz); });
+    curveDisplay.setStaticResponseFunction ([this] (float hz) { return staticResponseDbAt (hz); });
 
     curveDisplay.setSpectrumFunction ([this] (float lowHz, float highHz)
     {
@@ -94,7 +102,7 @@ MixingPluginEditor::MixingPluginEditor (MixingPluginProcessor& p)
 
     selectBand (0);
 
-    setSize (720, 420);
+    setSize (720, 500);
     startTimerHz (30);
 }
 
@@ -104,17 +112,24 @@ MixingPluginEditor::~MixingPluginEditor()
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();
+    thresholdAttachment.reset();
+    ratioAttachment.reset();
+    attackAttachment.reset();
+    releaseAttachment.reset();
     bandOnAttachment.reset();
+    bandDynAttachment.reset();
     inputAttachment.reset();
     outputAttachment.reset();
     bypassAttachment.reset();
 
     // Every component using a custom LookAndFeel must drop it before the
     // LookAndFeel is destroyed, or JUCE asserts on the dangling pointer.
-    for (auto* knob : { &freqKnob, &gainKnob, &qKnob, &inputKnob, &outputKnob })
+    for (auto* knob : { &freqKnob, &gainKnob, &qKnob, &inputKnob, &outputKnob,
+                        &thresholdKnob, &ratioKnob, &attackKnob, &releaseKnob })
         knob->slider.setLookAndFeel (nullptr);
 
     bandOnButton.setLookAndFeel (nullptr);
+    bandDynButton.setLookAndFeel (nullptr);
     bypassButton.setLookAndFeel (nullptr);
 }
 
@@ -134,13 +149,23 @@ void MixingPluginEditor::selectBand (int band)
     freqAttachment.reset();
     gainAttachment.reset();
     qAttachment.reset();
+    thresholdAttachment.reset();
+    ratioAttachment.reset();
+    attackAttachment.reset();
+    releaseAttachment.reset();
     bandOnAttachment.reset();
+    bandDynAttachment.reset();
 
     auto& apvts = processorRef.apvts;
-    freqAttachment   = std::make_unique<SliderAttachment> (apvts, ParamID::bandFreq (selectedBand), freqKnob.slider);
-    gainAttachment   = std::make_unique<SliderAttachment> (apvts, ParamID::bandGain (selectedBand), gainKnob.slider);
-    qAttachment      = std::make_unique<SliderAttachment> (apvts, ParamID::bandQ    (selectedBand), qKnob.slider);
-    bandOnAttachment = std::make_unique<ButtonAttachment> (apvts, ParamID::bandOn   (selectedBand), bandOnButton);
+    freqAttachment      = std::make_unique<SliderAttachment> (apvts, ParamID::bandFreq (selectedBand), freqKnob.slider);
+    gainAttachment      = std::make_unique<SliderAttachment> (apvts, ParamID::bandGain (selectedBand), gainKnob.slider);
+    qAttachment         = std::make_unique<SliderAttachment> (apvts, ParamID::bandQ    (selectedBand), qKnob.slider);
+    thresholdAttachment = std::make_unique<SliderAttachment> (apvts, ParamID::bandThreshold (selectedBand), thresholdKnob.slider);
+    ratioAttachment     = std::make_unique<SliderAttachment> (apvts, ParamID::bandRatio (selectedBand), ratioKnob.slider);
+    attackAttachment    = std::make_unique<SliderAttachment> (apvts, ParamID::bandAttack (selectedBand), attackKnob.slider);
+    releaseAttachment   = std::make_unique<SliderAttachment> (apvts, ParamID::bandRelease (selectedBand), releaseKnob.slider);
+    bandOnAttachment    = std::make_unique<ButtonAttachment> (apvts, ParamID::bandOn  (selectedBand), bandOnButton);
+    bandDynAttachment   = std::make_unique<ButtonAttachment> (apvts, ParamID::bandDyn (selectedBand), bandDynButton);
 
     updateNodes();
     repaint();
@@ -179,7 +204,13 @@ void MixingPluginEditor::removeBand (int band)
 
 // ── Response ────────────────────────────────────────────────────────────
 
-float MixingPluginEditor::bandResponseDbAt (int band, float frequencyHz) const
+bool MixingPluginEditor::isBandDynamic (int band) const
+{
+    return processorRef.apvts.getRawParameterValue (ParamID::bandDyn (band))->load() > 0.5f;
+}
+
+float MixingPluginEditor::bandResponseDbAt (int band, float frequencyHz,
+                                            bool includeDynamics) const
 {
     if (! isBandOn (band))
         return 0.0f;
@@ -187,8 +218,14 @@ float MixingPluginEditor::bandResponseDbAt (int band, float frequencyHz) const
     auto& apvts = processorRef.apvts;
 
     const auto frequency = apvts.getRawParameterValue (ParamID::bandFreq (band))->load();
-    const auto gain      = apvts.getRawParameterValue (ParamID::bandGain (band))->load();
     const auto q         = apvts.getRawParameterValue (ParamID::bandQ    (band))->load();
+    auto       gain      = apvts.getRawParameterValue (ParamID::bandGain (band))->load();
+
+    // The live curve adds the reduction the DSP is applying right now. Note
+    // this is read from the audio thread's atomic, so it is a snapshot — the
+    // curve is a picture of the last block, not a prediction.
+    if (includeDynamics && isBandDynamic (band))
+        gain += processorRef.getBandReductionDb (band);
 
     const auto coefficients = dsp::BiquadCoefficients::makePeak (displaySampleRate,
                                                                  frequency, q, gain);
@@ -210,7 +247,17 @@ float MixingPluginEditor::responseDbAt (float frequencyHz) const
     auto total = broadbandOffsetDb();
 
     for (int band = 0; band < numBands; ++band)
-        total += bandResponseDbAt (band, frequencyHz);
+        total += bandResponseDbAt (band, frequencyHz, true);
+
+    return total;
+}
+
+float MixingPluginEditor::staticResponseDbAt (float frequencyHz) const
+{
+    auto total = broadbandOffsetDb();
+
+    for (int band = 0; band < numBands; ++band)
+        total += bandResponseDbAt (band, frequencyHz, false);
 
     return total;
 }
@@ -224,26 +271,29 @@ void MixingPluginEditor::updateNodes()
 
     for (int band = 0; band < numBands; ++band)
     {
+        // Disabled bands contribute no handle at all. Six grey ghosts parked on
+        // the zero line read as a broken display rather than an empty one.
+        if (! isBandOn (band))
+            continue;
+
         ui::FrequencyCurveDisplay::BandNode node;
 
+        node.id          = band;
         node.frequencyHz = apvts.getRawParameterValue (ParamID::bandFreq (band))->load();
         node.colour      = theme::bandColour (band);
-        node.active      = isBandOn (band);
-        node.selected    = node.active && (band == selectedBand);
-        node.draggable   = node.active;
+        node.active      = true;
+        node.selected    = (band == selectedBand);
+        node.draggable   = true;
 
         // Placed on the composite curve rather than at the band's own gain, so
         // the handle stays welded to the line: with several bands overlapping,
         // a band's own gain is not where the curve actually is.
         node.gainDb = responseDbAt (node.frequencyHz);
 
-        if (node.active)
+        node.response = [this, band] (float hz)
         {
-            node.response = [this, band] (float hz)
-            {
-                return bandResponseDbAt (band, hz) + broadbandOffsetDb();
-            };
-        }
+            return bandResponseDbAt (band, hz, true) + broadbandOffsetDb();
+        };
 
         nodes.push_back (std::move (node));
     }
@@ -306,12 +356,35 @@ void MixingPluginEditor::timerCallback()
         repaint();          // the band badge reflects the on/off state too
     }
 
+    // Gain reduction moves with the audio, not with the parameters, so the
+    // signature above will never see it. 0.05 dB is below what is visible on
+    // the curve, which keeps a static band from repainting on detector noise.
+    auto reductionMoved = false;
+
+    for (int band = 0; band < numBands; ++band)
+    {
+        const auto reduction = isBandDynamic (band) ? processorRef.getBandReductionDb (band)
+                                                    : 0.0f;
+
+        if (std::abs (reduction - lastReductionDb[(size_t) band]) > 0.05f)
+        {
+            lastReductionDb[(size_t) band] = reduction;
+            reductionMoved = true;
+        }
+    }
+
+    if (reductionMoved)
+    {
+        updateNodes();
+        repaint();          // the reduction meter lives in the control strip
+    }
+
     // update() drains the FIFO and runs the FFT on this thread. It returns
     // false when nothing changed and everything has already decayed to the
     // floor, which is what keeps an idle editor at zero CPU.
     const auto spectrumMoved = processorRef.analyser.update();
 
-    if (parametersMoved || spectrumMoved)
+    if (parametersMoved || spectrumMoved || reductionMoved)
         curveDisplay.repaint();
 }
 
@@ -341,7 +414,7 @@ void MixingPluginEditor::paint (juce::Graphics& g)
     // ambiguous the moment there is more than one band.
     const auto accent = theme::bandColour (selectedBand);
     const auto on = isBandOn (selectedBand);
-    const juce::Rectangle<int> badge { margin, controlTop + 30, badgeWidth, 18 };
+    const juce::Rectangle<int> badge { margin, controlTop + 26, badgeWidth, 18 };
 
     g.setColour (accent.withAlpha (on ? 0.22f : 0.07f));
     g.fillRoundedRectangle (badge.toFloat(), 3.0f);
@@ -350,6 +423,8 @@ void MixingPluginEditor::paint (juce::Graphics& g)
     g.setFont (theme::labelFont (10.0f));
     g.drawText ("BAND " + juce::String (selectedBand + 1), badge, juce::Justification::centred);
 
+    paintReductionMeter (g, { getWidth() - margin - 150, controlTop + rowHeight + 26, 150, 16 });
+
     // Discoverability: double-click is not guessable, and an EQ where you
     // cannot find how to add a band reads as broken.
     g.setColour (theme::textFaint);
@@ -357,6 +432,43 @@ void MixingPluginEditor::paint (juce::Graphics& g)
     g.drawText ("double-click to add or remove a band",
                 juce::Rectangle<int> (margin, getHeight() - 16, getWidth() - margin * 2, 12),
                 juce::Justification::centredRight);
+}
+
+void MixingPluginEditor::paintReductionMeter (juce::Graphics& g,
+                                              juce::Rectangle<int> area) const
+{
+    constexpr float fullScaleDb = 18.0f;
+
+    g.setColour (theme::textFaint);
+    g.setFont (theme::labelFont (9.5f));
+    g.drawText ("GR", area.removeFromLeft (18), juce::Justification::centredLeft);
+
+    auto track = area.removeFromLeft (area.getWidth() - 40).toFloat();
+
+    g.setColour (theme::displayBackground);
+    g.fillRoundedRectangle (track, 2.0f);
+
+    if (isBandDynamic (selectedBand) && isBandOn (selectedBand))
+    {
+        const auto reduction = processorRef.getBandReductionDb (selectedBand);
+        const auto proportion = juce::jlimit (0.0f, 1.0f, -reduction / fullScaleDb);
+
+        // Filling right-to-left, because reduction pulls the level DOWN. A bar
+        // that grows rightward reads as "more output", which is backwards.
+        auto filled = track.withTrimmedLeft (track.getWidth() * (1.0f - proportion));
+
+        g.setColour (theme::bandColour (selectedBand).withAlpha (0.85f));
+        g.fillRoundedRectangle (filled, 2.0f);
+
+        g.setColour (theme::textDim);
+        g.drawText (juce::String (reduction, 1) + " dB",
+                    area.withTrimmedLeft (4), juce::Justification::centredLeft);
+    }
+    else
+    {
+        g.setColour (theme::textFaint);
+        g.drawText ("--", area.withTrimmedLeft (4), juce::Justification::centredLeft);
+    }
 }
 
 void MixingPluginEditor::resized()
@@ -371,18 +483,30 @@ void MixingPluginEditor::resized()
 
     curveDisplay.setBounds (bounds.reduced (margin, margin - 2));
 
-    // Selected-band controls on the left after the band badge, I/O on the
-    // right — the grouping the signal flow implies.
-    controls.removeFromLeft (badgeWidth + 8);
+    // Row one: what the band IS. Row two: how it REACTS. Splitting them means
+    // the static controls stay in the same place whether dynamics are on or
+    // off, so muscle memory survives toggling DYN.
+    auto bandRow = controls.removeFromTop (rowHeight);
+    auto dynRow  = controls;
 
-    bandOnButton.setBounds (controls.removeFromLeft (38).withSizeKeepingCentre (34, 20));
-    controls.removeFromLeft (8);
+    bandRow.removeFromLeft (badgeWidth + 8);
+    bandOnButton.setBounds (bandRow.removeFromLeft (38).withSizeKeepingCentre (34, 20));
+    bandRow.removeFromLeft (8);
 
-    freqKnob.setBounds (controls.removeFromLeft (knobSlot));
-    gainKnob.setBounds (controls.removeFromLeft (knobSlot));
-    qKnob   .setBounds (controls.removeFromLeft (knobSlot));
+    freqKnob.setBounds (bandRow.removeFromLeft (knobSlot));
+    gainKnob.setBounds (bandRow.removeFromLeft (knobSlot));
+    qKnob   .setBounds (bandRow.removeFromLeft (knobSlot));
 
-    auto ioArea = controls.removeFromRight (knobSlot * 2);
+    auto ioArea = bandRow.removeFromRight (knobSlot * 2);
     inputKnob .setBounds (ioArea.removeFromLeft (knobSlot));
     outputKnob.setBounds (ioArea.removeFromLeft (knobSlot));
+
+    dynRow.removeFromLeft (badgeWidth + 8);
+    bandDynButton.setBounds (dynRow.removeFromLeft (38).withSizeKeepingCentre (34, 20));
+    dynRow.removeFromLeft (8);
+
+    thresholdKnob.setBounds (dynRow.removeFromLeft (knobSlot));
+    ratioKnob    .setBounds (dynRow.removeFromLeft (knobSlot));
+    attackKnob   .setBounds (dynRow.removeFromLeft (knobSlot));
+    releaseKnob  .setBounds (dynRow.removeFromLeft (knobSlot));
 }

@@ -26,6 +26,14 @@ namespace ParamID
     inline juce::String bandGain (int index) { return "band" + juce::String (index) + "Gain"; }
     inline juce::String bandQ    (int index) { return "band" + juce::String (index) + "Q"; }
     inline juce::String bandOn   (int index) { return "band" + juce::String (index) + "On"; }
+
+    // Dynamics, per band. A dynamic band is the same filter with its gain
+    // driven by a detector listening through a band-pass at the same frequency.
+    inline juce::String bandDyn       (int index) { return "band" + juce::String (index) + "Dyn"; }
+    inline juce::String bandThreshold (int index) { return "band" + juce::String (index) + "Thr"; }
+    inline juce::String bandRatio     (int index) { return "band" + juce::String (index) + "Ratio"; }
+    inline juce::String bandAttack    (int index) { return "band" + juce::String (index) + "Atk"; }
+    inline juce::String bandRelease   (int index) { return "band" + juce::String (index) + "Rel"; }
 }
 
 /*

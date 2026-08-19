@@ -60,6 +60,14 @@ public:
     // that safe; see dsp/SpectrumAnalyser.h.
     dsp::SpectrumAnalyser<12> analyser;
 
+    // Live gain reduction for a band, in dB and always <= 0. Read by the editor
+    // to show the dynamics working; atomic inside, so this is safe to call from
+    // the message thread.
+    float getBandReductionDb (int band) const noexcept
+    {
+        return equaliser.getBandReductionDb ((size_t) band);
+    }
+
 private:
     void pushToAnalyser (const juce::AudioBuffer<float>& buffer) noexcept;
 
@@ -75,6 +83,11 @@ private:
         std::atomic<float>* gain      { nullptr };
         std::atomic<float>* q         { nullptr };
         std::atomic<float>* on        { nullptr };
+        std::atomic<float>* dynamic   { nullptr };
+        std::atomic<float>* threshold { nullptr };
+        std::atomic<float>* ratio     { nullptr };
+        std::atomic<float>* attack    { nullptr };
+        std::atomic<float>* release   { nullptr };
     };
 
     std::array<BandParams, numBands> bandParams {};

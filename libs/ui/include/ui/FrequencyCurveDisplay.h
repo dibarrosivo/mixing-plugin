@@ -51,6 +51,20 @@ public:
         repaint();
     }
 
+    /*  The curve as it would be with no dynamics acting — drawn as a faint
+        ghost behind the live one.
+
+        Without it a dynamic band is invisible: the curve simply sits lower and
+        you cannot tell whether that is the setting or the dynamics working. The
+        gap between ghost and live IS the gain reduction, which is the single
+        most useful thing to see on a dynamic EQ.
+    */
+    void setStaticResponseFunction (ResponseFunction fn)
+    {
+        staticResponseFunction = std::move (fn);
+        repaint();
+    }
+
     void setSpectrumFunction (SpectrumFunction fn)
     {
         spectrumFunction = std::move (fn);
@@ -75,6 +89,17 @@ public:
 
     struct BandNode
     {
+        /*  The owner's identifier for this band, reported back through every
+            callback.
+
+            Not the index into the node list: the owner only supplies nodes for
+            bands that are switched on, so the two diverge as soon as a band in
+            the middle is disabled. Passing the list index back would edit the
+            wrong band, which is the kind of bug that only appears once someone
+            turns off band 2.
+        */
+        int          id          { 0 };
+
         float        frequencyHz { 1000.0f };
         float        gainDb      { 0.0f };
         juce::Colour colour      { theme::bandColour (0) };
@@ -142,7 +167,8 @@ public:
         paintDecibelGrid (g);
         paintSpectrum (g);      // behind the curve — it is context, not content
         paintBandFills (g);     // then each band's own contribution
-        paintCurve (g);         // then the composite, on top of both
+        paintStaticGhost (g);   // where the curve would sit with no dynamics
+        paintCurve (g);         // then the live composite, on top of everything
         paintNodes (g);
 
         g.setColour (theme::border);
@@ -158,10 +184,10 @@ public:
             return;
 
         if (onNodeSelect)
-            onNodeSelect (draggedNode);
+            onNodeSelect (nodes[(size_t) draggedNode].id);
 
         if (onNodeGesture)
-            onNodeGesture (draggedNode, true);
+            onNodeGesture (nodes[(size_t) draggedNode].id, true);
     }
 
     /*  Double-click adds a band where you clicked, or removes the one you
@@ -176,7 +202,7 @@ public:
         if (onNode >= 0)
         {
             if (onRemoveBand)
-                onRemoveBand (onNode);
+                onRemoveBand (nodes[(size_t) onNode].id);
 
             return;
         }
@@ -199,13 +225,13 @@ public:
         const auto gain = juce::jlimit (decibelMin, decibelMax,
                                         yToDecibels (event.position.y));
 
-        onNodeDrag (draggedNode, frequency, gain);
+        onNodeDrag (nodes[(size_t) draggedNode].id, frequency, gain);
     }
 
     void mouseUp (const juce::MouseEvent&) override
     {
         if (draggedNode >= 0 && onNodeGesture)
-            onNodeGesture (draggedNode, false);
+            onNodeGesture (nodes[(size_t) draggedNode].id, false);
 
         draggedNode = -1;
         hoveredNode = -1;
@@ -398,6 +424,42 @@ private:
         }
     }
 
+    void paintStaticGhost (juce::Graphics& g) const
+    {
+        if (! staticResponseFunction || ! responseFunction)
+            return;
+
+        juce::Path ghost;
+        bool started = false;
+        auto departsFromLive = false;
+
+        for (float x = plotArea.getX(); x <= plotArea.getRight(); x += 1.0f)
+        {
+            const auto hz = xToFrequency (x);
+            const auto staticDb = staticResponseFunction (hz);
+
+            if (std::abs (staticDb - responseFunction (hz)) > 0.1f)
+                departsFromLive = true;
+
+            const auto y = decibelsToY (juce::jlimit (decibelMin, decibelMax, staticDb));
+
+            if (! started) { ghost.startNewSubPath (x, y); started = true; }
+            else           { ghost.lineTo (x, y); }
+        }
+
+        // Nothing is moving, so the ghost would sit exactly under the live
+        // curve and only make the line look thicker.
+        if (! started || ! departsFromLive)
+            return;
+
+        const float dashes[] = { 3.0f, 3.0f };
+        juce::Path dashed;
+        juce::PathStrokeType (1.0f).createDashedStroke (dashed, ghost, dashes, 2);
+
+        g.setColour (theme::curve.withAlpha (0.35f));
+        g.fillPath (dashed);
+    }
+
     void paintCurve (juce::Graphics& g) const
     {
         if (! responseFunction)
@@ -482,6 +544,7 @@ private:
     }
 
     ResponseFunction    responseFunction;
+    ResponseFunction    staticResponseFunction;
     SpectrumFunction    spectrumFunction;
     NodeDragCallback    onNodeDrag;
     NodeGestureCallback onNodeGesture;

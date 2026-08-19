@@ -18,6 +18,23 @@ namespace
         return range;
     }
 
+    juce::NormalisableRange<float> ratioRange()
+    {
+        juce::NormalisableRange<float> range { 1.0f, 20.0f, 0.01f };
+
+        // Skewed low: everything musically useful happens between 1.5:1 and
+        // 6:1, and a linear control spends most of its travel above that.
+        range.setSkewForCentre (4.0f);
+        return range;
+    }
+
+    juce::NormalisableRange<float> timeRange (float low, float high, float centre)
+    {
+        juce::NormalisableRange<float> range { low, high, 0.01f };
+        range.setSkewForCentre (centre);
+        return range;
+    }
+
     juce::NormalisableRange<float> qRange()
     {
         juce::NormalisableRange<float> range { 0.1f, 10.0f, 0.01f };
@@ -64,6 +81,35 @@ juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
             juce::ParameterID { ParamID::bandOn (band), 1 },
             "Band " + number + " On",
             band == 0));
+
+        layout.add (std::make_unique<juce::AudioParameterBool> (
+            juce::ParameterID { ParamID::bandDyn (band), 1 },
+            "Band " + number + " Dynamic",
+            false));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandThreshold (band), 1 },
+            "Band " + number + " Threshold",
+            decibelRange (-60.0f, 0.0f),
+            -24.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandRatio (band), 1 },
+            "Band " + number + " Ratio",
+            ratioRange(),
+            4.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandAttack (band), 1 },
+            "Band " + number + " Attack",
+            timeRange (0.1f, 200.0f, 10.0f),
+            10.0f));
+
+        layout.add (std::make_unique<juce::AudioParameterFloat> (
+            juce::ParameterID { ParamID::bandRelease (band), 1 },
+            "Band " + number + " Release",
+            timeRange (5.0f, 2000.0f, 150.0f),
+            120.0f));
     }
 
     layout.add (std::make_unique<juce::AudioParameterFloat> (
