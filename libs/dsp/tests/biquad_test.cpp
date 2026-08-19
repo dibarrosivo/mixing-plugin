@@ -1,7 +1,7 @@
 /*
     Standalone tests for Biquad — no JUCE, no test framework, no CMake.
 
-        g++ -std=c++20 -O2 -Isource -o /tmp/biquad_test tests/biquad_test.cpp && /tmp/biquad_test
+        g++ -std=c++20 -O2 -Ilibs/dsp/include -o /tmp/biquad_test libs/dsp/tests/biquad_test.cpp && /tmp/biquad_test
 
     The strategy is to measure the filter two independent ways and require them
     to agree:
@@ -23,7 +23,9 @@
 #include <utility>
 #include <vector>
 
-#include "dsp/Biquad.h"
+#include <dsp/Biquad.h>
+
+using namespace dsp;
 
 namespace
 {

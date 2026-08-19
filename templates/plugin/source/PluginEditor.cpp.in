@@ -1,0 +1,64 @@
+#include "PluginEditor.h"
+
+namespace
+{
+    constexpr int knobWidth    = 96;
+    constexpr int knobHeight   = 108;
+    constexpr int margin       = 16;
+    constexpr int headerHeight = 34;
+}
+
+@CLASS@Editor::AttachedSlider::AttachedSlider (juce::AudioProcessorValueTreeState& state,
+                                               const juce::String& parameterID,
+                                               const juce::String& labelText,
+                                               const juce::String& suffix,
+                                               juce::Component& parent)
+    : attachment (state, parameterID, slider)
+{
+    slider.setSliderStyle (juce::Slider::RotaryHorizontalVerticalDrag);
+    slider.setTextBoxStyle (juce::Slider::TextBoxBelow, false, knobWidth, 18);
+    slider.setTextValueSuffix (suffix);
+    parent.addAndMakeVisible (slider);
+
+    label.setText (labelText, juce::dontSendNotification);
+    label.setJustificationType (juce::Justification::centred);
+    label.attachToComponent (&slider, false);
+    parent.addAndMakeVisible (label);
+}
+
+@CLASS@Editor::@CLASS@Editor (@CLASS@Processor& p)
+    : juce::AudioProcessorEditor (&p),
+      processorRef (p),
+      inputGain  (p.apvts, ParamID::inputGain,  "Input",  " dB", *this),
+      outputGain (p.apvts, ParamID::outputGain, "Output", " dB", *this),
+      bypassAttachment (p.apvts, ParamID::bypass, bypassButton)
+{
+    addAndMakeVisible (bypassButton);
+
+    setSize (knobWidth * 2 + margin * 2 + 100,
+             knobHeight + headerHeight + margin * 2 + 24);
+}
+
+void @CLASS@Editor::paint (juce::Graphics& g)
+{
+    g.fillAll (juce::Colour (0xff1c1f26));
+
+    g.setColour (juce::Colours::white.withAlpha (0.85f));
+    g.setFont (juce::FontOptions (18.0f, juce::Font::bold));
+    g.drawText (processorRef.getName(),
+                margin, margin, getWidth() - margin * 2, headerHeight - margin,
+                juce::Justification::centredLeft);
+}
+
+void @CLASS@Editor::resized()
+{
+    auto bounds = getLocalBounds().reduced (margin);
+
+    auto header = bounds.removeFromTop (headerHeight - margin);
+    bypassButton.setBounds (header.removeFromRight (90));
+
+    bounds.removeFromTop (24);   // room for the labels attached above the knobs
+
+    for (auto* control : { &inputGain, &outputGain })
+        control->slider.setBounds (bounds.removeFromLeft (knobWidth).withHeight (knobHeight));
+}

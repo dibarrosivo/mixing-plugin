@@ -1,0 +1,33 @@
+#include "Parameters.h"
+
+namespace
+{
+    juce::NormalisableRange<float> decibelRange (float low, float high)
+    {
+        return { low, high, 0.01f };
+    }
+}
+
+juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout()
+{
+    juce::AudioProcessorValueTreeState::ParameterLayout layout;
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamID::inputGain, 1 },
+        "Input Gain",
+        decibelRange (-24.0f, 24.0f),
+        0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterFloat> (
+        juce::ParameterID { ParamID::outputGain, 1 },
+        "Output Gain",
+        decibelRange (-24.0f, 24.0f),
+        0.0f));
+
+    layout.add (std::make_unique<juce::AudioParameterBool> (
+        juce::ParameterID { ParamID::bypass, 1 },
+        "Bypass",
+        false));
+
+    return layout;
+}

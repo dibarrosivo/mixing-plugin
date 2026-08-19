@@ -1,0 +1,9 @@
+add_audio_plugin(
+    TARGET       @TARGET@
+    PRODUCT_NAME "@PRODUCT_NAME@"
+    PLUGIN_CODE  @PLUGIN_CODE@
+    DESCRIPTION  "@DESCRIPTION@"
+    SOURCES
+        source/PluginProcessor.cpp
+        source/PluginEditor.cpp
+        source/Parameters.cpp)

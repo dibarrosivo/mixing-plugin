@@ -4,7 +4,7 @@
 
 /*
     A gain control. Trivial on purpose — its job here is to establish the
-    contract that every DSP module in this project follows:
+    contract that every DSP module in this library follows:
 
         prepare()  configure for a sample rate / block size. Called off the
                    audio thread, before playback. Allocation is allowed here.
@@ -12,9 +12,12 @@
         reset()    clear internal state without reallocating (transport jumps,
                    host resets).
 
-    Match this shape in new modules and they drop straight into the chain in
-    PluginProcessor.
+    Match this shape in new modules and they drop straight into any plugin's
+    chain in four lines.
 */
+namespace dsp
+{
+
 class GainStage
 {
 public:
@@ -59,3 +62,5 @@ private:
 
     juce::SmoothedValue<float, juce::ValueSmoothingTypes::Linear> gain { 1.0f };
 };
+
+} // namespace dsp

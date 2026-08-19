@@ -3,7 +3,7 @@
 #include <array>
 #include <juce_dsp/juce_dsp.h>
 
-#include "Biquad.h"
+#include <dsp/Biquad.h>
 
 /*
     One peaking EQ band: frequency, gain, Q.
@@ -12,6 +12,9 @@
     is not just an optimisation — recomputing every block would run four
     transcendental functions per block for no reason.
 */
+namespace dsp
+{
+
 class ToneFilter
 {
 public:
@@ -80,3 +83,5 @@ private:
     // channels bleed into each other.
     std::array<Biquad, maxChannels> filters;
 };
+
+} // namespace dsp

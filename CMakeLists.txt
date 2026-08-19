@@ -1,21 +1,21 @@
 cmake_minimum_required(VERSION 3.22)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Identity
+# Shared identity
 #
-# PLUGIN_CODE and PLUGIN_MANUFACTURER_CODE are baked into the plugin's unique
-# ID. Changing them later makes every host treat this as a *different* plugin
-# and silently drop it from already-saved projects. Pick them once, now.
-# Both must be exactly 4 characters with at least one uppercase letter.
+# Applies to every plugin in the repo. Per-plugin identity — product name,
+# plugin code, bundle id — lives in plugins/<name>/CMakeLists.txt.
+#
+# AUDIO_MANUFACTURER_CODE is shared on purpose: it identifies *you*, and hosts
+# group plugins by it. The per-plugin PLUGIN_CODE is what must be unique, and
+# add_audio_plugin() enforces that.
 # ─────────────────────────────────────────────────────────────────────────────
-set(PROJECT_NAME             "MixingPlugin")
-set(PRODUCT_NAME             "Mixing Plugin")
-set(COMPANY_NAME             "Ivo Di Barros")
-set(BUNDLE_ID                "com.ivodibarros.mixingplugin")
-set(PLUGIN_MANUFACTURER_CODE Ivdb)
-set(PLUGIN_CODE              Mxp1)
+set(AUDIO_COMPANY_NAME      "Ivo Di Barros")
+set(AUDIO_COMPANY_DOMAIN    "com.ivodibarros")
+set(AUDIO_MANUFACTURER_CODE "Ivdb")
+set(AUDIO_DEFAULT_FORMATS   VST3 Standalone)
 
-project(${PROJECT_NAME} VERSION 0.1.0 LANGUAGES C CXX)
+project(AudioPlugins VERSION 0.1.0 LANGUAGES C CXX)
 
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
@@ -25,12 +25,17 @@ if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
     set(CMAKE_BUILD_TYPE Release CACHE STRING "" FORCE)
 endif()
 
+option(AUDIO_BUILD_TESTS "Build the DSP unit tests" ON)
+
+if(AUDIO_BUILD_TESTS)
+    enable_testing()
+endif()
+
 # ─────────────────────────────────────────────────────────────────────────────
 # JUCE
 #
-# Fetched rather than vendored as a submodule, so `git clone && cmake -B build`
-# works on a fresh machine with nothing to remember to init. The download is
-# cached in build/_deps, so it only happens on the first configure.
+# Fetched once for the whole repo, shared by every plugin target. Adding a
+# second plugin costs no extra download and no extra JUCE compile.
 # ─────────────────────────────────────────────────────────────────────────────
 include(FetchContent)
 FetchContent_Declare(JUCE
@@ -40,71 +45,30 @@ FetchContent_Declare(JUCE
     GIT_PROGRESS   TRUE)
 FetchContent_MakeAvailable(JUCE)
 
-# ─────────────────────────────────────────────────────────────────────────────
-# The plugin target
-# ─────────────────────────────────────────────────────────────────────────────
-juce_add_plugin(${PROJECT_NAME}
-    COMPANY_NAME                "${COMPANY_NAME}"
-    BUNDLE_ID                   "${BUNDLE_ID}"
-    PRODUCT_NAME                "${PRODUCT_NAME}"
-    PLUGIN_MANUFACTURER_CODE    ${PLUGIN_MANUFACTURER_CODE}
-    PLUGIN_CODE                 ${PLUGIN_CODE}
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_CURRENT_SOURCE_DIR}/cmake")
+include(AudioPlugin)
 
-    IS_SYNTH                    FALSE
-    NEEDS_MIDI_INPUT            FALSE
-    NEEDS_MIDI_OUTPUT           FALSE
-    IS_MIDI_EFFECT              FALSE
-    EDITOR_WANTS_KEYBOARD_FOCUS FALSE
-
-    # Drops the built .vst3 into ~/.vst3 so a rebuild is immediately visible to
-    # the host. Rescan in the host after the first build only.
-    COPY_PLUGIN_AFTER_BUILD     TRUE
-
-    # Add LV2 here if you want it; CLAP needs the clap-juce-extensions wrapper.
-    FORMATS                     VST3 Standalone)
-
-target_sources(${PROJECT_NAME} PRIVATE
-    source/PluginProcessor.cpp
-    source/PluginEditor.cpp
-    source/Parameters.cpp)
-
-target_include_directories(${PROJECT_NAME} PRIVATE source)
-
-target_compile_definitions(${PROJECT_NAME} PUBLIC
-    JUCE_WEB_BROWSER=0          # drops the libwebkit2gtk-dev build dependency
-    JUCE_USE_CURL=0             # drops the libcurl-dev build dependency
-    JUCE_VST3_CAN_REPLACE_VST2=0
-    JUCE_REPORT_APP_USAGE=0
-    # Note: JUCE_DISPLAY_SPLASH_SCREEN is deliberately left at its default.
-    # Disabling it requires an appropriate JUCE licence.
-)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    juce::juce_audio_utils
-    juce::juce_dsp
-    PUBLIC
-    juce::juce_recommended_config_flags
-    juce::juce_recommended_lto_flags
-    juce::juce_recommended_warning_flags)
+# Shared DSP first — plugins depend on it.
+add_subdirectory(libs/dsp)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Tests
+# Plugins
 #
-# The dsp/ headers deliberately avoid JUCE where they can, so these build and
-# run in about a second with no framework and no plugin. They also run without
-# CMake at all, which is what makes them usable before the toolchain is set up:
-#
-#   g++ -std=c++20 -O2 -Isource -o /tmp/biquad_test tests/biquad_test.cpp && /tmp/biquad_test
+# Auto-discovered, so scripts/new-plugin.sh does not have to edit this file.
+# CONFIGURE_DEPENDS makes the build re-check for new directories rather than
+# silently ignoring them until the next manual configure.
 # ─────────────────────────────────────────────────────────────────────────────
-option(MIXINGPLUGIN_BUILD_TESTS "Build the DSP unit tests" ON)
+file(GLOB AUDIO_PLUGIN_DIRS CONFIGURE_DEPENDS
+     "${CMAKE_CURRENT_SOURCE_DIR}/plugins/*/CMakeLists.txt")
 
-if(MIXINGPLUGIN_BUILD_TESTS)
-    enable_testing()
-
-    add_executable(biquad_test tests/biquad_test.cpp)
-    target_include_directories(biquad_test PRIVATE source)
-    target_compile_features(biquad_test PRIVATE cxx_std_20)
-    target_compile_options(biquad_test PRIVATE -Wall -Wextra)
-
-    add_test(NAME biquad COMMAND biquad_test)
+if(NOT AUDIO_PLUGIN_DIRS)
+    message(WARNING "No plugins found under plugins/. Run scripts/new-plugin.sh to add one.")
 endif()
+
+foreach(plugin_cmake ${AUDIO_PLUGIN_DIRS})
+    get_filename_component(plugin_dir "${plugin_cmake}" DIRECTORY)
+    add_subdirectory("${plugin_dir}")
+endforeach()
+
+get_property(_codes GLOBAL PROPERTY AUDIO_PLUGIN_SUMMARY)
+message(STATUS "Plugins in this build: ${_codes}")

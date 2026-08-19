@@ -1,0 +1,49 @@
+#pragma once
+
+#include <juce_audio_processors/juce_audio_processors.h>
+
+#include "PluginProcessor.h"
+
+class @CLASS@Editor final : public juce::AudioProcessorEditor
+{
+public:
+    explicit @CLASS@Editor (@CLASS@Processor&);
+    ~@CLASS@Editor() override = default;
+
+    void paint (juce::Graphics& g) override;
+    void resized() override;
+
+private:
+    /*
+        Slider + label + attachment as one unit.
+
+        The attachment keeps the control, the parameter and the host's
+        automation lane in sync in both directions — never call
+        setValue()/getValue() on the slider yourself once one exists.
+
+        Declaration order matters: the attachment must be constructed after the
+        slider it binds to, and destroyed before it.
+    */
+    struct AttachedSlider
+    {
+        AttachedSlider (juce::AudioProcessorValueTreeState& state,
+                        const juce::String& parameterID,
+                        const juce::String& labelText,
+                        const juce::String& suffix,
+                        juce::Component& parent);
+
+        juce::Slider slider;
+        juce::Label  label;
+        juce::AudioProcessorValueTreeState::SliderAttachment attachment;
+    };
+
+    @CLASS@Processor& processorRef;
+
+    AttachedSlider inputGain;
+    AttachedSlider outputGain;
+
+    juce::ToggleButton bypassButton { "Bypass" };
+    juce::AudioProcessorValueTreeState::ButtonAttachment bypassAttachment;
+
+    JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR (@CLASS@Editor)
+};

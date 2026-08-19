@@ -14,8 +14,13 @@
     locks, safe to recompute inside processBlock.
 
     The coefficient formulas are the RBJ Audio EQ Cookbook, which is the
-    reference every EQ you have ever used is ultimately based on.
+    reference every EQ you have ever used is ultimately based on. Shelves and
+    pass filters are further formulas over this same struct — add them here
+    rather than writing a second filter class.
 */
+namespace dsp
+{
+
 struct BiquadCoefficients
 {
     float b0 { 1.0f }, b1 { 0.0f }, b2 { 0.0f };
@@ -80,3 +85,5 @@ private:
     float s1 { 0.0f };
     float s2 { 0.0f };
 };
+
+} // namespace dsp
